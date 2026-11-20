@@ -5,13 +5,15 @@ namespace GestionLocationVoitures.Models
     public class Vehicule
     {
         public int Id { get; set; }
-        public string Immatriculation { get; set; }
-        public string Marque { get; set; }
-        public string Modele { get; set; }
+        public string Immatriculation { get; set; } = string.Empty;
+        public string Marque { get; set; } = string.Empty;
+        public string Modele { get; set; } = string.Empty;
         public int Kilometrage { get; set; }
         public decimal PrixParJour { get; set; }
         public StatutVehicule Statut { get; set; }
         public List<Entretien> HistoriqueEntretiens { get; set; } = new List<Entretien>();
+
+        public Vehicule() { }
 
         public Vehicule(int id, string immatriculation, string marque, string modele, int kilometrage, decimal prixParJour)
         {

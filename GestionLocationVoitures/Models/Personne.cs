@@ -3,10 +3,12 @@
     public abstract class Personne
     {
         public int Id { get; set; }
-        public string Nom { get; set; }
-        public string Prenom { get; set; }
-        public string Telephone { get; set; }
-        public string Email { get; set; }
+        public string Nom { get; set; } = string.Empty;
+        public string Prenom { get; set; } = string.Empty;
+        public string Telephone { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+
+        protected Personne() { }
 
         protected Personne(int id, string nom, string prenom, string telephone, string email)
         {
@@ -25,7 +27,9 @@
 
     public class Client : Personne
     {
-        public string NumeroPermis { get; set; }
+        public string NumeroPermis { get; set; } = string.Empty;
+
+        public Client() { }
 
         public Client(int id, string nom, string prenom, string telephone, string email, string numeroPermis)
             : base(id, nom, prenom, telephone, email)
@@ -41,8 +45,10 @@
 
     public class Agent : Personne
     {
-        public string Matricule { get; set; }
-        public string Poste { get; set; }
+        public string Matricule { get; set; } = string.Empty;
+        public string Poste { get; set; } = string.Empty;
+
+        public Agent() { }
 
         public Agent(int id, string nom, string prenom, string telephone, string email, string matricule, string poste)
             : base(id, nom, prenom, telephone, email)
