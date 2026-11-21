@@ -39,20 +39,58 @@ namespace GestionLocationVoitures.Forms
         private Label lblModeVehicule = null!;
         private int? selectedVehiculeId = null;
 
+        // --- Contrôles Onglet 3 : Réservations ---
+        private DataGridView dgvReservations = null!;
+        private ComboBox cmbResClient = null!;
+        private ComboBox cmbResVehicule = null!;
+        private DateTimePicker dtpDebut = null!;
+        private DateTimePicker dtpFin = null!;
+        private ComboBox cmbResStatut = null!;
+        private Label lblEstimation = null!;
+        private TextBox txtRechercheRes = null!;
+        private Button btnAjouterRes = null!;
+        private Button btnConfirmerRes = null!;
+        private Button btnAnnulerRes = null!;
+        private Button btnSupprimerRes = null!;
+        private Label lblModeRes = null!;
+        private int? selectedReservationId = null;
+
+        // --- Barre d'état KPI en bas ---
+        private ToolStripStatusLabel lblKpiClients = null!;
+        private ToolStripStatusLabel lblKpiDispo = null!;
+        private ToolStripStatusLabel lblKpiReserves = null!;
+        private ToolStripStatusLabel lblKpiMaint = null!;
+        private ToolStripStatusLabel lblKpiReservations = null!;
+
+        private sealed class ComboItem
+        {
+            public int Id { get; init; }
+            public string Libelle { get; init; } = string.Empty;
+            public decimal PrixParJour { get; init; }
+            public override string ToString() => Libelle;
+        }
+
         public MainForm()
         {
             Text = "Gestion d'une Location de Voitures — EF Core & SQLite";
-            Size = new Size(1060, 660);
-            MinimumSize = new Size(1020, 600);
+            Size = new Size(1120, 700);
+            MinimumSize = new Size(1060, 640);
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Segoe UI", 9.5F);
 
             InitialiserInterface();
             InitialiserDonneesSiVide();
+
             ChargerClients();
             ChargerVehicules();
+            ChargerCombosReservation();
+            ChargerReservations();
+            ActualiserKpis();
+
             MettreAJourEtatBoutonsClient();
             MettreAJourEtatBoutonsVehicule();
+            MettreAJourEtatBoutonsReservation();
+            MettreAJourEstimationReservation();
         }
 
         private void InitialiserInterface()
@@ -61,19 +99,49 @@ namespace GestionLocationVoitures.Forms
 
             TabPage tabClients = new TabPage("Gestion des Clients");
             TabPage tabVehicules = new TabPage("Gestion des Véhicules");
+            TabPage tabReservations = new TabPage("Gestion des Réservations");
 
             ConstruireOngletClients(tabClients);
             ConstruireOngletVehicules(tabVehicules);
+            ConstruireOngletReservations(tabReservations);
 
             tabs.TabPages.Add(tabClients);
             tabs.TabPages.Add(tabVehicules);
+            tabs.TabPages.Add(tabReservations);
             tabs.SelectedIndexChanged += (s, e) =>
             {
                 if (selectedClientId == null) dgvClients.ClearSelection();
                 if (selectedVehiculeId == null) dgvVehicules.ClearSelection();
+                if (selectedReservationId == null) dgvReservations.ClearSelection();
             };
 
+            StatusStrip statusBar = new StatusStrip
+            {
+                BackColor = Color.FromArgb(241, 245, 249),
+                SizingGrip = false
+            };
+
+            lblKpiClients = new ToolStripStatusLabel { Font = new Font("Segoe UI", 9F, FontStyle.Bold), ForeColor = Color.FromArgb(30, 41, 59) };
+            lblKpiDispo = new ToolStripStatusLabel { Font = new Font("Segoe UI", 9F, FontStyle.Bold), ForeColor = Color.FromArgb(21, 128, 61) };
+            lblKpiReserves = new ToolStripStatusLabel { Font = new Font("Segoe UI", 9F, FontStyle.Bold), ForeColor = Color.FromArgb(29, 78, 216) };
+            lblKpiMaint = new ToolStripStatusLabel { Font = new Font("Segoe UI", 9F, FontStyle.Bold), ForeColor = Color.FromArgb(180, 83, 9) };
+            lblKpiReservations = new ToolStripStatusLabel { Font = new Font("Segoe UI", 9F, FontStyle.Bold), ForeColor = Color.FromArgb(88, 28, 135) };
+
+            statusBar.Items.AddRange(new ToolStripItem[]
+            {
+                lblKpiClients,
+                new ToolStripSeparator(),
+                lblKpiDispo,
+                new ToolStripSeparator(),
+                lblKpiReserves,
+                new ToolStripSeparator(),
+                lblKpiMaint,
+                new ToolStripSeparator(),
+                lblKpiReservations
+            });
+
             Controls.Add(tabs);
+            Controls.Add(statusBar);
         }
 
         private static void ConfigurerDataGridView(DataGridView dgv)
@@ -94,6 +162,22 @@ namespace GestionLocationVoitures.Forms
             dgv.ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(235, 240, 248);
         }
 
+        private void ActualiserKpis()
+        {
+            using var db = new AppDbContext();
+            int nbClients = db.Clients.Count();
+            int nbDispo = db.Vehicules.Count(v => v.Statut == StatutVehicule.Disponible);
+            int nbResLoue = db.Vehicules.Count(v => v.Statut == StatutVehicule.Reserve || v.Statut == StatutVehicule.Loue);
+            int nbMaint = db.Vehicules.Count(v => v.Statut == StatutVehicule.EnMaintenance);
+            int nbResActives = db.Reservations.Count(r => r.Statut != StatutReservation.Annulee);
+
+            lblKpiClients.Text = $"  Clients : {nbClients}  ";
+            lblKpiDispo.Text = $"  Véhicules Disponibles : {nbDispo}  ";
+            lblKpiReserves.Text = $"  Réservés / Loués : {nbResLoue}  ";
+            lblKpiMaint.Text = $"  En Maintenance : {nbMaint}  ";
+            lblKpiReservations.Text = $"  Réservations Actives : {nbResActives}  ";
+        }
+
         // =========================================================
         // ONGLET 1 : GESTION DES CLIENTS (CRUD)
         // =========================================================
@@ -109,38 +193,34 @@ namespace GestionLocationVoitures.Forms
                 Padding = new Padding(10)
             };
 
-            // Ligne 1 : Nom, Prénom, N° Permis
             Label lblNom = new Label { Text = "Nom :", Location = new Point(15, 30), AutoSize = true };
-            txtNom = new TextBox { Location = new Point(105, 27), Width = 195 };
+            txtNom = new TextBox { Location = new Point(105, 27), Width = 205 };
 
-            Label lblPrenom = new Label { Text = "Prénom :", Location = new Point(325, 30), AutoSize = true };
-            txtPrenom = new TextBox { Location = new Point(415, 27), Width = 195 };
+            Label lblPrenom = new Label { Text = "Prénom :", Location = new Point(335, 30), AutoSize = true };
+            txtPrenom = new TextBox { Location = new Point(425, 27), Width = 205 };
 
-            Label lblPermis = new Label { Text = "N° Permis :", Location = new Point(635, 30), AutoSize = true };
-            txtPermis = new TextBox { Location = new Point(735, 27), Width = 260 };
+            Label lblPermis = new Label { Text = "N° Permis :", Location = new Point(655, 30), AutoSize = true };
+            txtPermis = new TextBox { Location = new Point(755, 27), Width = 285 };
 
-            // Ligne 2 : Téléphone, Email
             Label lblTel = new Label { Text = "Téléphone :", Location = new Point(15, 68), AutoSize = true };
-            txtTelephone = new TextBox { Location = new Point(105, 65), Width = 195 };
+            txtTelephone = new TextBox { Location = new Point(105, 65), Width = 205 };
 
-            Label lblEmail = new Label { Text = "Email :", Location = new Point(325, 68), AutoSize = true };
-            txtEmail = new TextBox { Location = new Point(415, 65), Width = 340 };
+            Label lblEmail = new Label { Text = "Email :", Location = new Point(335, 68), AutoSize = true };
+            txtEmail = new TextBox { Location = new Point(425, 65), Width = 360 };
 
-            // Ligne 3 : Boutons d'action + Barre de recherche espacée
             btnAjouterClient = new Button { Text = "Ajouter", Location = new Point(15, 108), Width = 110, Height = 32 };
             btnModifierClient = new Button { Text = "Modifier", Location = new Point(135, 108), Width = 110, Height = 32 };
             btnSupprimerClient = new Button { Text = "Supprimer", Location = new Point(255, 108), Width = 110, Height = 32 };
             Button btnVider = new Button { Text = "Vider / Nouveau", Location = new Point(375, 108), Width = 145, Height = 32 };
 
-            Label lblSearch = new Label { Text = "Rechercher :", Location = new Point(545, 114), AutoSize = true };
+            Label lblSearch = new Label { Text = "Rechercher :", Location = new Point(550, 114), AutoSize = true };
             txtRechercheClient = new TextBox
             {
-                Location = new Point(655, 111),
-                Width = 340,
+                Location = new Point(660, 111),
+                Width = 380,
                 PlaceholderText = "Filtrer par nom, prénom ou N° permis..."
             };
 
-            // Ligne 4 : Guide d'utilisation + Indicateur de mode
             Label lblGuide = new Label
             {
                 Text = "Guide : Remplissez les champs vides pour Ajouter • Cliquez sur une ligne du tableau pour Modifier ou Supprimer.",
@@ -152,7 +232,7 @@ namespace GestionLocationVoitures.Forms
 
             lblModeClient = new Label
             {
-                Location = new Point(745, 153),
+                Location = new Point(785, 153),
                 AutoSize = true,
                 Font = new Font("Segoe UI", 9F, FontStyle.Bold)
             };
@@ -270,7 +350,6 @@ namespace GestionLocationVoitures.Forms
 
             using var db = new AppDbContext();
 
-            // Vérification insensible à la casse : même N° de permis OU (même Nom+Prénom avec au moins un contact/permis identique)
             var clientExistant = db.Clients.AsEnumerable().FirstOrDefault(c =>
                 c.NumeroPermis.Trim().ToLower() == permisNorm ||
                 (c.Nom.Trim().ToLower() == nomNorm &&
@@ -297,6 +376,7 @@ namespace GestionLocationVoitures.Forms
                     db.SaveChanges();
 
                     ChargerClients(txtRechercheClient.Text.Trim());
+                    ChargerCombosReservation();
                     ViderFormulaireClient();
                     MessageBox.Show("Les informations du client existant ont été mises à jour.", "Modification effectuée", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
@@ -316,6 +396,8 @@ namespace GestionLocationVoitures.Forms
             db.SaveChanges();
 
             ChargerClients(txtRechercheClient.Text.Trim());
+            ChargerCombosReservation();
+            ActualiserKpis();
             ViderFormulaireClient();
             MessageBox.Show("Client ajouté avec succès dans SQLite.", "Succès", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
@@ -334,7 +416,18 @@ namespace GestionLocationVoitures.Forms
                 return;
             }
 
+            string permisNorm = txtPermis.Text.Trim().ToLower();
             using var db = new AppDbContext();
+
+            bool conflitPermis = db.Clients.AsEnumerable()
+                .Any(c => c.Id != selectedClientId.Value && c.NumeroPermis.Trim().ToLower() == permisNorm);
+
+            if (conflitPermis)
+            {
+                MessageBox.Show("Un autre client possède déjà ce numéro de permis.", "Doublon détecté", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
             var client = db.Clients.Find(selectedClientId.Value);
             if (client == null) return;
 
@@ -346,6 +439,8 @@ namespace GestionLocationVoitures.Forms
 
             db.SaveChanges();
             ChargerClients(txtRechercheClient.Text.Trim());
+            ChargerCombosReservation();
+            ChargerReservations(txtRechercheRes.Text.Trim());
             ViderFormulaireClient();
             MessageBox.Show("Client modifié avec succès.", "Succès", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
@@ -358,10 +453,16 @@ namespace GestionLocationVoitures.Forms
                 return;
             }
 
+            using var db = new AppDbContext();
+            if (db.Reservations.Any(r => r.Client.Id == selectedClientId.Value))
+            {
+                MessageBox.Show("Impossible de supprimer ce client car il est lié à une ou plusieurs réservations.", "Suppression bloquée", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
             if (MessageBox.Show("Confirmer la suppression de ce client ?", "Confirmation", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
                 return;
 
-            using var db = new AppDbContext();
             var client = db.Clients.Find(selectedClientId.Value);
             if (client == null) return;
 
@@ -369,6 +470,8 @@ namespace GestionLocationVoitures.Forms
             db.SaveChanges();
 
             ChargerClients(txtRechercheClient.Text.Trim());
+            ChargerCombosReservation();
+            ActualiserKpis();
             ViderFormulaireClient();
         }
 
@@ -399,47 +502,43 @@ namespace GestionLocationVoitures.Forms
                 Padding = new Padding(10)
             };
 
-            // Ligne 1 : Matricule, Marque, Modèle
             Label lblImmat = new Label { Text = "Matricule :", Location = new Point(15, 30), AutoSize = true };
-            txtImmat = new TextBox { Location = new Point(115, 27), Width = 185 };
+            txtImmat = new TextBox { Location = new Point(115, 27), Width = 195 };
 
-            Label lblMarque = new Label { Text = "Marque :", Location = new Point(325, 30), AutoSize = true };
-            txtMarque = new TextBox { Location = new Point(425, 27), Width = 185 };
+            Label lblMarque = new Label { Text = "Marque :", Location = new Point(335, 30), AutoSize = true };
+            txtMarque = new TextBox { Location = new Point(435, 27), Width = 195 };
 
-            Label lblModele = new Label { Text = "Modèle :", Location = new Point(635, 30), AutoSize = true };
-            txtModele = new TextBox { Location = new Point(720, 27), Width = 275 };
+            Label lblModele = new Label { Text = "Modèle :", Location = new Point(655, 30), AutoSize = true };
+            txtModele = new TextBox { Location = new Point(740, 27), Width = 300 };
 
-            // Ligne 2 : Kilométrage, Prix / Jour, Statut
             Label lblKm = new Label { Text = "Kilométrage :", Location = new Point(15, 68), AutoSize = true };
-            numKm = new NumericUpDown { Location = new Point(115, 65), Width = 185, Maximum = 1000000, Increment = 500 };
+            numKm = new NumericUpDown { Location = new Point(115, 65), Width = 195, Maximum = 1000000, Increment = 500 };
 
-            Label lblPrix = new Label { Text = "Prix / Jour :", Location = new Point(325, 68), AutoSize = true };
-            numPrixJour = new NumericUpDown { Location = new Point(425, 65), Width = 185, Maximum = 5000, DecimalPlaces = 2, Value = 100 };
+            Label lblPrix = new Label { Text = "Prix / Jour :", Location = new Point(335, 68), AutoSize = true };
+            numPrixJour = new NumericUpDown { Location = new Point(435, 65), Width = 195, Maximum = 5000, DecimalPlaces = 2, Value = 100 };
 
-            Label lblStatut = new Label { Text = "Statut :", Location = new Point(635, 68), AutoSize = true };
+            Label lblStatut = new Label { Text = "Statut :", Location = new Point(655, 68), AutoSize = true };
             cmbStatut = new ComboBox
             {
-                Location = new Point(720, 65),
-                Width = 275,
+                Location = new Point(740, 65),
+                Width = 300,
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 DataSource = Enum.GetValues(typeof(StatutVehicule))
             };
 
-            // Ligne 3 : Boutons + Recherche espacée
             btnAjouterVehicule = new Button { Text = "Ajouter", Location = new Point(15, 108), Width = 110, Height = 32 };
             btnModifierVehicule = new Button { Text = "Modifier", Location = new Point(135, 108), Width = 110, Height = 32 };
             btnSupprimerVehicule = new Button { Text = "Supprimer", Location = new Point(255, 108), Width = 110, Height = 32 };
             Button btnClearV = new Button { Text = "Vider / Nouveau", Location = new Point(375, 108), Width = 145, Height = 32 };
 
-            Label lblSearchV = new Label { Text = "Rechercher :", Location = new Point(545, 114), AutoSize = true };
+            Label lblSearchV = new Label { Text = "Rechercher :", Location = new Point(550, 114), AutoSize = true };
             txtRechercheVehicule = new TextBox
             {
-                Location = new Point(655, 111),
-                Width = 340,
+                Location = new Point(660, 111),
+                Width = 380,
                 PlaceholderText = "Filtrer par matricule, marque ou modèle..."
             };
 
-            // Ligne 4 : Guide d'utilisation + Indicateur de mode
             Label lblGuideV = new Label
             {
                 Text = "Guide : Remplissez les champs vides pour Ajouter • Cliquez sur une ligne du tableau pour Modifier ou Supprimer.",
@@ -451,7 +550,7 @@ namespace GestionLocationVoitures.Forms
 
             lblModeVehicule = new Label
             {
-                Location = new Point(745, 153),
+                Location = new Point(785, 153),
                 AutoSize = true,
                 Font = new Font("Segoe UI", 9F, FontStyle.Bold)
             };
@@ -589,6 +688,8 @@ namespace GestionLocationVoitures.Forms
                     db.SaveChanges();
 
                     ChargerVehicules(txtRechercheVehicule.Text.Trim());
+                    ChargerCombosReservation();
+                    ActualiserKpis();
                     ViderFormulaireVehicule();
                     MessageBox.Show("Les informations du véhicule existant ont été mises à jour.", "Modification effectuée", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
@@ -609,6 +710,8 @@ namespace GestionLocationVoitures.Forms
             db.SaveChanges();
 
             ChargerVehicules(txtRechercheVehicule.Text.Trim());
+            ChargerCombosReservation();
+            ActualiserKpis();
             ViderFormulaireVehicule();
             MessageBox.Show("Véhicule enregistré dans SQLite.", "Succès", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
@@ -627,7 +730,18 @@ namespace GestionLocationVoitures.Forms
                 return;
             }
 
+            string immatNorm = txtImmat.Text.Trim().ToLower();
             using var db = new AppDbContext();
+
+            bool conflitImmat = db.Vehicules.AsEnumerable()
+                .Any(v => v.Id != selectedVehiculeId.Value && v.Immatriculation.Trim().ToLower() == immatNorm);
+
+            if (conflitImmat)
+            {
+                MessageBox.Show("Un autre véhicule possède déjà cette immatriculation.", "Doublon détecté", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
             var v = db.Vehicules.Find(selectedVehiculeId.Value);
             if (v == null) return;
 
@@ -640,6 +754,9 @@ namespace GestionLocationVoitures.Forms
 
             db.SaveChanges();
             ChargerVehicules(txtRechercheVehicule.Text.Trim());
+            ChargerCombosReservation();
+            ChargerReservations(txtRechercheRes.Text.Trim());
+            ActualiserKpis();
             ViderFormulaireVehicule();
             MessageBox.Show("Véhicule mis à jour.", "Succès", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
@@ -652,10 +769,16 @@ namespace GestionLocationVoitures.Forms
                 return;
             }
 
+            using var db = new AppDbContext();
+            if (db.Reservations.Any(r => r.Vehicule.Id == selectedVehiculeId.Value))
+            {
+                MessageBox.Show("Impossible de supprimer ce véhicule car il est lié à une ou plusieurs réservations.", "Suppression bloquée", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
             if (MessageBox.Show("Confirmer la suppression de ce véhicule ?", "Confirmation", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
                 return;
 
-            using var db = new AppDbContext();
             var v = db.Vehicules.Find(selectedVehiculeId.Value);
             if (v == null) return;
 
@@ -663,6 +786,8 @@ namespace GestionLocationVoitures.Forms
             db.SaveChanges();
 
             ChargerVehicules(txtRechercheVehicule.Text.Trim());
+            ChargerCombosReservation();
+            ActualiserKpis();
             ViderFormulaireVehicule();
         }
 
@@ -677,6 +802,399 @@ namespace GestionLocationVoitures.Forms
             cmbStatut.SelectedItem = StatutVehicule.Disponible;
             dgvVehicules.ClearSelection();
             MettreAJourEtatBoutonsVehicule();
+        }
+
+        // =========================================================
+        // ONGLET 3 : GESTION DES RÉSERVATIONS
+        // =========================================================
+        private void ConstruireOngletReservations(TabPage page)
+        {
+            page.Padding = new Padding(12);
+
+            GroupBox grpRes = new GroupBox
+            {
+                Text = "Nouvelle Réservation & Suivi",
+                Dock = DockStyle.Top,
+                Height = 195,
+                Padding = new Padding(10)
+            };
+
+            // Ligne 1 : Client et Véhicule
+            Label lblClient = new Label { Text = "Client :", Location = new Point(15, 30), AutoSize = true };
+            cmbResClient = new ComboBox
+            {
+                Location = new Point(100, 27),
+                Width = 340,
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+
+            Label lblVeh = new Label { Text = "Véhicule :", Location = new Point(465, 30), AutoSize = true };
+            cmbResVehicule = new ComboBox
+            {
+                Location = new Point(550, 27),
+                Width = 490,
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+
+            // Ligne 2 : Dates, Statut initial et Coût estimé
+            Label lblDebut = new Label { Text = "Date Début :", Location = new Point(15, 68), AutoSize = true };
+            dtpDebut = new DateTimePicker
+            {
+                Location = new Point(105, 65),
+                Width = 175,
+                Format = DateTimePickerFormat.Short,
+                Value = DateTime.Today
+            };
+
+            Label lblFin = new Label { Text = "Date Fin :", Location = new Point(300, 68), AutoSize = true };
+            dtpFin = new DateTimePicker
+            {
+                Location = new Point(375, 65),
+                Width = 175,
+                Format = DateTimePickerFormat.Short,
+                Value = DateTime.Today.AddDays(3)
+            };
+
+            Label lblStatutRes = new Label { Text = "Statut :", Location = new Point(570, 68), AutoSize = true };
+            cmbResStatut = new ComboBox
+            {
+                Location = new Point(635, 65),
+                Width = 145,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                DataSource = new[] { StatutReservation.Confirmee, StatutReservation.EnAttente }
+            };
+
+            lblEstimation = new Label
+            {
+                Location = new Point(800, 68),
+                AutoSize = true,
+                Font = new Font("Segoe UI", 9.5F, FontStyle.Bold),
+                ForeColor = Color.FromArgb(21, 128, 61)
+            };
+
+            // Ligne 3 : Boutons d'action + Recherche
+            btnAjouterRes = new Button { Text = "Créer Réservation", Location = new Point(15, 108), Width = 145, Height = 32 };
+            btnConfirmerRes = new Button { Text = "Confirmer", Location = new Point(170, 108), Width = 100, Height = 32 };
+            btnAnnulerRes = new Button { Text = "Annuler", Location = new Point(280, 108), Width = 95, Height = 32 };
+            btnSupprimerRes = new Button { Text = "Supprimer", Location = new Point(385, 108), Width = 95, Height = 32 };
+            Button btnClearRes = new Button { Text = "Vider / Nouveau", Location = new Point(490, 108), Width = 135, Height = 32 };
+
+            Label lblSearchRes = new Label { Text = "Rechercher :", Location = new Point(645, 114), AutoSize = true };
+            txtRechercheRes = new TextBox
+            {
+                Location = new Point(745, 111),
+                Width = 295,
+                PlaceholderText = "Client, matricule ou statut..."
+            };
+
+            // Ligne 4 : Guide & Mode
+            Label lblGuideRes = new Label
+            {
+                Text = "Guide : Choisissez un client, un véhicule disponible et les dates • Sélectionnez une ligne pour Confirmer ou Annuler.",
+                Location = new Point(15, 156),
+                AutoSize = true,
+                ForeColor = Color.FromArgb(75, 85, 99),
+                Font = new Font("Segoe UI", 8.5F, FontStyle.Italic)
+            };
+
+            lblModeRes = new Label
+            {
+                Location = new Point(820, 155),
+                AutoSize = true,
+                Font = new Font("Segoe UI", 9F, FontStyle.Bold)
+            };
+
+            cmbResVehicule.SelectedIndexChanged += (s, e) => MettreAJourEstimationReservation();
+            dtpDebut.ValueChanged += (s, e) => MettreAJourEstimationReservation();
+            dtpFin.ValueChanged += (s, e) => MettreAJourEstimationReservation();
+
+            btnAjouterRes.Click += BtnAjouterReservation_Click;
+            btnConfirmerRes.Click += BtnConfirmerReservation_Click;
+            btnAnnulerRes.Click += BtnAnnulerReservation_Click;
+            btnSupprimerRes.Click += BtnSupprimerReservation_Click;
+            btnClearRes.Click += (s, e) => ViderFormulaireReservation();
+            txtRechercheRes.TextChanged += (s, e) => ChargerReservations(txtRechercheRes.Text.Trim());
+
+            grpRes.Controls.AddRange(new Control[]
+            {
+                lblClient, cmbResClient, lblVeh, cmbResVehicule,
+                lblDebut, dtpDebut, lblFin, dtpFin, lblStatutRes, cmbResStatut, lblEstimation,
+                btnAjouterRes, btnConfirmerRes, btnAnnulerRes, btnSupprimerRes, btnClearRes,
+                lblSearchRes, txtRechercheRes, lblGuideRes, lblModeRes
+            });
+
+            dgvReservations = new DataGridView();
+            ConfigurerDataGridView(dgvReservations);
+            dgvReservations.CellClick += DgvReservations_CellClick;
+            dgvReservations.DataBindingComplete += (s, e) =>
+            {
+                if (selectedReservationId == null) dgvReservations.ClearSelection();
+            };
+
+            Panel pnlGridR = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 10, 0, 0) };
+            pnlGridR.Controls.Add(dgvReservations);
+
+            page.Controls.Add(pnlGridR);
+            page.Controls.Add(grpRes);
+        }
+
+        private void ChargerCombosReservation()
+        {
+            using var db = new AppDbContext();
+
+            var clients = db.Clients
+                .OrderBy(c => c.Nom)
+                .Select(c => new ComboItem
+                {
+                    Id = c.Id,
+                    Libelle = $"{c.Nom} {c.Prenom} ({c.NumeroPermis})"
+                })
+                .ToList();
+
+            var vehicules = db.Vehicules
+                .OrderBy(v => v.Statut)
+                .ThenBy(v => v.Marque)
+                .Select(v => new ComboItem
+                {
+                    Id = v.Id,
+                    Libelle = $"{v.Immatriculation} — {v.Marque} {v.Modele} ({v.PrixParJour:0.00} DT/j) [{v.Statut}]",
+                    PrixParJour = v.PrixParJour
+                })
+                .ToList();
+
+            cmbResClient.DataSource = clients;
+            cmbResVehicule.DataSource = vehicules;
+            MettreAJourEstimationReservation();
+        }
+
+        private void MettreAJourEstimationReservation()
+        {
+            if (cmbResVehicule.SelectedItem is not ComboItem veh)
+            {
+                lblEstimation.Text = "Durée : - | Total : 0,00 DT";
+                return;
+            }
+
+            int jours = (dtpFin.Value.Date - dtpDebut.Value.Date).Days;
+            if (jours <= 0) jours = 1;
+            decimal total = jours * veh.PrixParJour;
+            lblEstimation.Text = $"Durée : {jours} j | Total : {total:0.00} DT";
+        }
+
+        private void MettreAJourEtatBoutonsReservation()
+        {
+            bool selectionne = selectedReservationId != null;
+            btnAjouterRes.Enabled = !selectionne;
+            btnConfirmerRes.Enabled = selectionne;
+            btnAnnulerRes.Enabled = selectionne;
+            btnSupprimerRes.Enabled = selectionne;
+
+            if (selectionne)
+            {
+                lblModeRes.Text = $"Mode : Réservation #{selectedReservationId}";
+                lblModeRes.ForeColor = Color.FromArgb(29, 78, 216);
+            }
+            else
+            {
+                lblModeRes.Text = "Mode : Nouvelle réservation";
+                lblModeRes.ForeColor = Color.FromArgb(21, 128, 61);
+            }
+        }
+
+        private void ChargerReservations(string filtre = "")
+        {
+            using var db = new AppDbContext();
+            var list = db.Reservations
+                .Include(r => r.Client)
+                .Include(r => r.Vehicule)
+                .OrderByDescending(r => r.Id)
+                .ToList();
+
+            if (!string.IsNullOrWhiteSpace(filtre))
+            {
+                string f = filtre.ToLower();
+                list = list.Where(r =>
+                    r.Client.Nom.ToLower().Contains(f) ||
+                    r.Client.Prenom.ToLower().Contains(f) ||
+                    r.Vehicule.Immatriculation.ToLower().Contains(f) ||
+                    r.Vehicule.Marque.ToLower().Contains(f) ||
+                    r.Statut.ToString().ToLower().Contains(f)).ToList();
+            }
+
+            dgvReservations.DataSource = list
+                .Select(r =>
+                {
+                    int duree = r.CalculerDureeJours();
+                    return new
+                    {
+                        r.Id,
+                        Client = $"{r.Client.Prenom} {r.Client.Nom}",
+                        Véhicule = $"{r.Vehicule.Immatriculation} ({r.Vehicule.Marque} {r.Vehicule.Modele})",
+                        Début = r.DateDebut.ToString("dd/MM/yyyy"),
+                        Fin = r.DateFin.ToString("dd/MM/yyyy"),
+                        Durée = $"{duree} j",
+                        MontantTotal = $"{duree * r.Vehicule.PrixParJour:0.00} DT",
+                        r.Statut
+                    };
+                })
+                .ToList();
+
+            if (selectedReservationId == null)
+                dgvReservations.ClearSelection();
+        }
+
+        private void DgvReservations_CellClick(object? sender, DataGridViewCellEventArgs e)
+        {
+            if (e.RowIndex < 0) return;
+            var row = dgvReservations.Rows[e.RowIndex];
+            selectedReservationId = Convert.ToInt32(row.Cells["Id"].Value);
+            MettreAJourEtatBoutonsReservation();
+        }
+
+        private void BtnAjouterReservation_Click(object? sender, EventArgs e)
+        {
+            if (cmbResClient.SelectedItem is not ComboItem clientItem || cmbResVehicule.SelectedItem is not ComboItem vehItem)
+            {
+                MessageBox.Show("Veuillez sélectionner un client et un véhicule.", "Validation", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (dtpFin.Value.Date < dtpDebut.Value.Date)
+            {
+                MessageBox.Show("La date de fin doit être supérieure ou égale à la date de début.", "Dates invalides", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            using var db = new AppDbContext();
+            var client = db.Clients.Find(clientItem.Id);
+            var vehicule = db.Vehicules.Find(vehItem.Id);
+            if (client == null || vehicule == null) return;
+
+            var statutSouhaite = (StatutReservation)(cmbResStatut.SelectedItem ?? StatutReservation.Confirmee);
+            var reservation = new Reservation(0, client, vehicule, dtpDebut.Value.Date, dtpFin.Value.Date);
+
+            try
+            {
+                if (statutSouhaite == StatutReservation.Confirmee)
+                {
+                    reservation.Confirmer();
+                }
+                else if (vehicule.Statut != StatutVehicule.Disponible)
+                {
+                    MessageBox.Show("Ce véhicule n'est pas disponible pour une nouvelle réservation.", "Indisponible", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+            }
+            catch (InvalidOperationException ex)
+            {
+                MessageBox.Show(ex.Message, "Véhicule indisponible", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            db.Reservations.Add(reservation);
+            db.SaveChanges();
+
+            ChargerVehicules(txtRechercheVehicule.Text.Trim());
+            ChargerCombosReservation();
+            ChargerReservations(txtRechercheRes.Text.Trim());
+            ActualiserKpis();
+            ViderFormulaireReservation();
+            MessageBox.Show("Réservation enregistrée avec succès.", "Succès", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void BtnConfirmerReservation_Click(object? sender, EventArgs e)
+        {
+            if (selectedReservationId == null) return;
+
+            using var db = new AppDbContext();
+            var res = db.Reservations.Include(r => r.Vehicule).FirstOrDefault(r => r.Id == selectedReservationId.Value);
+            if (res == null) return;
+
+            if (res.Statut == StatutReservation.Confirmee)
+            {
+                MessageBox.Show("Cette réservation est déjà confirmée.", "Information", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            try
+            {
+                res.Confirmer();
+                db.SaveChanges();
+            }
+            catch (InvalidOperationException ex)
+            {
+                MessageBox.Show(ex.Message, "Confirmation impossible", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            ChargerVehicules(txtRechercheVehicule.Text.Trim());
+            ChargerCombosReservation();
+            ChargerReservations(txtRechercheRes.Text.Trim());
+            ActualiserKpis();
+            ViderFormulaireReservation();
+            MessageBox.Show("Réservation confirmée et véhicule marqué comme Réservé.", "Confirmée", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void BtnAnnulerReservation_Click(object? sender, EventArgs e)
+        {
+            if (selectedReservationId == null) return;
+
+            using var db = new AppDbContext();
+            var res = db.Reservations.Include(r => r.Vehicule).FirstOrDefault(r => r.Id == selectedReservationId.Value);
+            if (res == null) return;
+
+            if (res.Statut == StatutReservation.Annulee)
+            {
+                MessageBox.Show("Cette réservation est déjà annulée.", "Information", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            res.Annuler();
+            db.SaveChanges();
+
+            ChargerVehicules(txtRechercheVehicule.Text.Trim());
+            ChargerCombosReservation();
+            ChargerReservations(txtRechercheRes.Text.Trim());
+            ActualiserKpis();
+            ViderFormulaireReservation();
+            MessageBox.Show("Réservation annulée et véhicule remis à Disponible.", "Annulée", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void BtnSupprimerReservation_Click(object? sender, EventArgs e)
+        {
+            if (selectedReservationId == null) return;
+
+            if (MessageBox.Show("Supprimer définitivement cette réservation ?", "Confirmation", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+                return;
+
+            using var db = new AppDbContext();
+            var res = db.Reservations.Include(r => r.Vehicule).FirstOrDefault(r => r.Id == selectedReservationId.Value);
+            if (res == null) return;
+
+            if (res.Statut == StatutReservation.Confirmee && res.Vehicule.Statut == StatutVehicule.Reserve)
+            {
+                res.Vehicule.Statut = StatutVehicule.Disponible;
+            }
+
+            db.Reservations.Remove(res);
+            db.SaveChanges();
+
+            ChargerVehicules(txtRechercheVehicule.Text.Trim());
+            ChargerCombosReservation();
+            ChargerReservations(txtRechercheRes.Text.Trim());
+            ActualiserKpis();
+            ViderFormulaireReservation();
+        }
+
+        private void ViderFormulaireReservation()
+        {
+            selectedReservationId = null;
+            dtpDebut.Value = DateTime.Today;
+            dtpFin.Value = DateTime.Today.AddDays(3);
+            if (cmbResStatut.Items.Count > 0) cmbResStatut.SelectedIndex = 0;
+            dgvReservations.ClearSelection();
+            MettreAJourEtatBoutonsReservation();
+            MettreAJourEstimationReservation();
         }
 
         private void InitialiserDonneesSiVide()
