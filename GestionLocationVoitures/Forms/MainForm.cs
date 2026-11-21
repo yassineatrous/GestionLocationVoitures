@@ -813,7 +813,7 @@ namespace GestionLocationVoitures.Forms
 
             GroupBox grpRes = new GroupBox
             {
-                Text = "Nouvelle Réservation & Suivi",
+                Text = "Nouvelle Réservation && Suivi",
                 Dock = DockStyle.Top,
                 Height = 195,
                 Padding = new Padding(10)
@@ -890,7 +890,7 @@ namespace GestionLocationVoitures.Forms
             // Ligne 4 : Guide & Mode
             Label lblGuideRes = new Label
             {
-                Text = "Guide : Choisissez un client, un véhicule disponible et les dates • Sélectionnez une ligne pour Confirmer ou Annuler.",
+                Text = "Guide : Choisissez un client, un véhicule et une période libre • Sélectionnez une ligne pour Confirmer ou Annuler.",
                 Location = new Point(15, 156),
                 AutoSize = true,
                 ForeColor = Color.FromArgb(75, 85, 99),
@@ -952,7 +952,7 @@ namespace GestionLocationVoitures.Forms
                 .ToList();
 
             var vehicules = db.Vehicules
-                .OrderBy(v => v.Statut)
+                .OrderBy(v => v.Statut == StatutVehicule.EnMaintenance)
                 .ThenBy(v => v.Marque)
                 .Select(v => new ComboItem
                 {
@@ -981,12 +981,23 @@ namespace GestionLocationVoitures.Forms
             lblEstimation.Text = $"Durée : {jours} j | Total : {total:0.00} DT";
         }
 
-        private void MettreAJourEtatBoutonsReservation()
+        private void SetFormulaireReservationEnabled(bool enabled)
+        {
+            cmbResClient.Enabled = enabled;
+            cmbResVehicule.Enabled = enabled;
+            dtpDebut.Enabled = enabled;
+            dtpFin.Enabled = enabled;
+            cmbResStatut.Enabled = enabled;
+        }
+
+        private void MettreAJourEtatBoutonsReservation(StatutReservation? statutSelectionne = null)
         {
             bool selectionne = selectedReservationId != null;
+            SetFormulaireReservationEnabled(!selectionne);
+
             btnAjouterRes.Enabled = !selectionne;
-            btnConfirmerRes.Enabled = selectionne;
-            btnAnnulerRes.Enabled = selectionne;
+            btnConfirmerRes.Enabled = selectionne && statutSelectionne == StatutReservation.EnAttente;
+            btnAnnulerRes.Enabled = selectionne && statutSelectionne != StatutReservation.Annulee;
             btnSupprimerRes.Enabled = selectionne;
 
             if (selectionne)
@@ -999,6 +1010,29 @@ namespace GestionLocationVoitures.Forms
                 lblModeRes.Text = "Mode : Nouvelle réservation";
                 lblModeRes.ForeColor = Color.FromArgb(21, 128, 61);
             }
+        }
+
+        private static Reservation? TrouverConflitReservation(AppDbContext db, int vehiculeId, DateTime debut, DateTime fin, int? excludeReservationId = null)
+        {
+            return db.Reservations
+                .Include(r => r.Client)
+                .Where(r => r.Vehicule.Id == vehiculeId
+                         && r.Id != (excludeReservationId ?? -1)
+                         && r.Statut == StatutReservation.Confirmee)
+                .AsEnumerable()
+                .FirstOrDefault(r => debut.Date <= r.DateFin.Date && fin.Date >= r.DateDebut.Date);
+        }
+
+        private static void SynchroniserStatutVehicule(AppDbContext db, Vehicule vehicule, int? excludeReservationId = null)
+        {
+            if (vehicule.Statut == StatutVehicule.EnMaintenance) return;
+
+            bool aAutreReservationActive = db.Reservations.Any(r =>
+                r.Vehicule.Id == vehicule.Id &&
+                r.Id != (excludeReservationId ?? -1) &&
+                r.Statut == StatutReservation.Confirmee);
+
+            vehicule.Statut = aAutreReservationActive ? StatutVehicule.Reserve : StatutVehicule.Disponible;
         }
 
         private void ChargerReservations(string filtre = "")
@@ -1046,9 +1080,35 @@ namespace GestionLocationVoitures.Forms
         private void DgvReservations_CellClick(object? sender, DataGridViewCellEventArgs e)
         {
             if (e.RowIndex < 0) return;
-            var row = dgvReservations.Rows[e.RowIndex];
-            selectedReservationId = Convert.ToInt32(row.Cells["Id"].Value);
-            MettreAJourEtatBoutonsReservation();
+            int id = Convert.ToInt32(dgvReservations.Rows[e.RowIndex].Cells["Id"].Value);
+
+            using var db = new AppDbContext();
+            var res = db.Reservations
+                .Include(r => r.Client)
+                .Include(r => r.Vehicule)
+                .FirstOrDefault(r => r.Id == id);
+
+            if (res == null) return;
+
+            selectedReservationId = res.Id;
+            dtpDebut.Value = res.DateDebut;
+            dtpFin.Value = res.DateFin;
+
+            foreach (ComboItem item in cmbResClient.Items)
+            {
+                if (item.Id == res.Client.Id) { cmbResClient.SelectedItem = item; break; }
+            }
+            foreach (ComboItem item in cmbResVehicule.Items)
+            {
+                if (item.Id == res.Vehicule.Id) { cmbResVehicule.SelectedItem = item; break; }
+            }
+            if (res.Statut == StatutReservation.Confirmee || res.Statut == StatutReservation.EnAttente)
+            {
+                cmbResStatut.SelectedItem = res.Statut;
+            }
+
+            MettreAJourEstimationReservation();
+            MettreAJourEtatBoutonsReservation(res.Statut);
         }
 
         private void BtnAjouterReservation_Click(object? sender, EventArgs e)
@@ -1070,25 +1130,32 @@ namespace GestionLocationVoitures.Forms
             var vehicule = db.Vehicules.Find(vehItem.Id);
             if (client == null || vehicule == null) return;
 
+            if (vehicule.Statut == StatutVehicule.EnMaintenance)
+            {
+                MessageBox.Show("Ce véhicule est actuellement en maintenance.", "Véhicule indisponible", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var conflit = TrouverConflitReservation(db, vehicule.Id, dtpDebut.Value, dtpFin.Value);
+            if (conflit != null)
+            {
+                MessageBox.Show(
+                    $"Ce véhicule est déjà réservé par {conflit.Client.Prenom} {conflit.Client.Nom} du {conflit.DateDebut:dd/MM/yyyy} au {conflit.DateFin:dd/MM/yyyy}.",
+                    "Créneau indisponible",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
             var statutSouhaite = (StatutReservation)(cmbResStatut.SelectedItem ?? StatutReservation.Confirmee);
             var reservation = new Reservation(0, client, vehicule, dtpDebut.Value.Date, dtpFin.Value.Date);
 
-            try
+            if (statutSouhaite == StatutReservation.Confirmee)
             {
-                if (statutSouhaite == StatutReservation.Confirmee)
-                {
-                    reservation.Confirmer();
-                }
-                else if (vehicule.Statut != StatutVehicule.Disponible)
-                {
-                    MessageBox.Show("Ce véhicule n'est pas disponible pour une nouvelle réservation.", "Indisponible", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-            }
-            catch (InvalidOperationException ex)
-            {
-                MessageBox.Show(ex.Message, "Véhicule indisponible", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
+                if (vehicule.Statut != StatutVehicule.Disponible)
+                    vehicule.Statut = StatutVehicule.Disponible;
+
+                reservation.Confirmer();
             }
 
             db.Reservations.Add(reservation);
@@ -1116,16 +1183,28 @@ namespace GestionLocationVoitures.Forms
                 return;
             }
 
-            try
+            if (res.Vehicule.Statut == StatutVehicule.EnMaintenance)
             {
-                res.Confirmer();
-                db.SaveChanges();
-            }
-            catch (InvalidOperationException ex)
-            {
-                MessageBox.Show(ex.Message, "Confirmation impossible", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Ce véhicule est actuellement en maintenance.", "Confirmation impossible", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
+
+            var conflit = TrouverConflitReservation(db, res.Vehicule.Id, res.DateDebut, res.DateFin, res.Id);
+            if (conflit != null)
+            {
+                MessageBox.Show(
+                    $"Impossible de confirmer : ce véhicule est déjà réservé par {conflit.Client.Prenom} {conflit.Client.Nom} du {conflit.DateDebut:dd/MM/yyyy} au {conflit.DateFin:dd/MM/yyyy}.",
+                    "Conflit de dates",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (res.Vehicule.Statut != StatutVehicule.Disponible)
+                res.Vehicule.Statut = StatutVehicule.Disponible;
+
+            res.Confirmer();
+            db.SaveChanges();
 
             ChargerVehicules(txtRechercheVehicule.Text.Trim());
             ChargerCombosReservation();
@@ -1150,6 +1229,7 @@ namespace GestionLocationVoitures.Forms
             }
 
             res.Annuler();
+            SynchroniserStatutVehicule(db, res.Vehicule, res.Id);
             db.SaveChanges();
 
             ChargerVehicules(txtRechercheVehicule.Text.Trim());
@@ -1157,7 +1237,7 @@ namespace GestionLocationVoitures.Forms
             ChargerReservations(txtRechercheRes.Text.Trim());
             ActualiserKpis();
             ViderFormulaireReservation();
-            MessageBox.Show("Réservation annulée et véhicule remis à Disponible.", "Annulée", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show("Réservation annulée et statut du véhicule mis à jour.", "Annulée", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
         private void BtnSupprimerReservation_Click(object? sender, EventArgs e)
@@ -1171,12 +1251,11 @@ namespace GestionLocationVoitures.Forms
             var res = db.Reservations.Include(r => r.Vehicule).FirstOrDefault(r => r.Id == selectedReservationId.Value);
             if (res == null) return;
 
-            if (res.Statut == StatutReservation.Confirmee && res.Vehicule.Statut == StatutVehicule.Reserve)
-            {
-                res.Vehicule.Statut = StatutVehicule.Disponible;
-            }
+            var vehicule = res.Vehicule;
+            int deletedId = res.Id;
 
             db.Reservations.Remove(res);
+            SynchroniserStatutVehicule(db, vehicule, deletedId);
             db.SaveChanges();
 
             ChargerVehicules(txtRechercheVehicule.Text.Trim());
